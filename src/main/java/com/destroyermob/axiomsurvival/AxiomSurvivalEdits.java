@@ -23,6 +23,7 @@ import net.minecraft.util.math.BlockPos;
 
 public final class AxiomSurvivalEdits {
     private static final int MAX_COST_LINES = 8;
+    private static final int UNLIMITED_TOOL_USES = Integer.MAX_VALUE / 4;
     private static BlockState axiomBlockBufferEmptyState;
     private static boolean triedLoadingAxiomBlockBufferEmptyState;
 
@@ -134,6 +135,16 @@ public final class AxiomSurvivalEdits {
         }
 
         CostReport report = costReport(player, world, edit);
+        if (!player.getAbilities().creativeMode && !report.unbreakable.isEmpty()) {
+            player.sendMessage(Text.literal("Axiom edit cancelled: some source blocks cannot be broken in survival. Examples: "
+                    + blockExamples(report.unbreakable)).formatted(Formatting.RED), false);
+            return;
+        }
+        if (!player.getAbilities().creativeMode && !report.missingTools.isEmpty()) {
+            player.sendMessage(Text.literal("Axiom edit cancelled: missing suitable tool for "
+                    + missingToolSummary(report.missingTools) + ".").formatted(Formatting.RED), false);
+            return;
+        }
         if (!report.unsupported.isEmpty()) {
             player.sendMessage(Text.literal("Axiom edit cancelled: some blocks have no survival item form. Examples: "
                     + unsupportedExamples(report.unsupported)).formatted(Formatting.RED), false);
@@ -148,6 +159,7 @@ public final class AxiomSurvivalEdits {
         if (!player.getAbilities().creativeMode) {
             removeCost(player, report.costs);
             returnBuckets(player, report.costs);
+            damageTools(player, world, report.toolUses);
         }
 
         int applied = applyBlocks(world, edit);
@@ -186,24 +198,48 @@ public final class AxiomSurvivalEdits {
 
     private static CostReport costReport(ServerPlayerEntity player, ServerWorld world, PendingEdit edit) {
         Map<Item, Integer> costs = new LinkedHashMap<>();
+        Map<Item, Integer> materialCredits = new LinkedHashMap<>();
+        Map<Integer, Integer> remainingToolUses = new LinkedHashMap<>();
+        Map<Integer, Integer> toolUses = new LinkedHashMap<>();
         List<BlockPos> unsupported = new ArrayList<>();
+        List<BreakRequirement> unbreakable = new ArrayList<>();
+        List<BreakRequirement> missingTools = new ArrayList<>();
         int unchanged = 0;
         int removals = 0;
+        int reusedMaterials = 0;
 
         for (Map.Entry<BlockPos, BlockState> entry : edit.blocks.entrySet()) {
+            BlockPos pos = entry.getKey();
+            BlockState source = world.getBlockState(pos);
             BlockState target = entry.getValue();
-            if (world.getBlockState(entry.getKey()).equals(target)) {
+            if (source.equals(target)) {
                 unchanged++;
                 continue;
             }
-            if (target.isAir()) {
+
+            if (!source.isAir()) {
                 removals++;
+                Item sourceItem = survivalCostItem(source);
+                if (sourceItem != Items.AIR) {
+                    materialCredits.merge(sourceItem, 1, Integer::sum);
+                }
+                validateBreak(player, world, pos, source, remainingToolUses, toolUses, unbreakable, missingTools);
+            }
+        }
+
+        for (Map.Entry<BlockPos, BlockState> entry : edit.blocks.entrySet()) {
+            BlockState source = world.getBlockState(entry.getKey());
+            BlockState target = entry.getValue();
+            if (source.equals(target) || target.isAir()) {
                 continue;
             }
-
             Item item = survivalCostItem(target);
             if (item == Items.AIR) {
                 unsupported.add(entry.getKey());
+                continue;
+            }
+            if (consumeMaterialCredit(materialCredits, item)) {
+                reusedMaterials++;
                 continue;
             }
             costs.merge(item, 1, Integer::sum);
@@ -219,7 +255,7 @@ public final class AxiomSurvivalEdits {
             }
         }
 
-        return new CostReport(costs, missing, unsupported, unchanged, removals);
+        return new CostReport(costs, missing, unsupported, unbreakable, missingTools, toolUses, unchanged, removals, reusedMaterials);
     }
 
     private static Item survivalCostItem(BlockState state) {
@@ -247,6 +283,77 @@ public final class AxiomSurvivalEdits {
         return count;
     }
 
+    private static void validateBreak(
+            ServerPlayerEntity player,
+            ServerWorld world,
+            BlockPos pos,
+            BlockState source,
+            Map<Integer, Integer> remainingToolUses,
+            Map<Integer, Integer> toolUses,
+            List<BreakRequirement> unbreakable,
+            List<BreakRequirement> missingTools) {
+        if (player.getAbilities().creativeMode) {
+            return;
+        }
+        if (source.getHardness(world, pos) < 0.0F) {
+            unbreakable.add(new BreakRequirement(source, pos));
+            return;
+        }
+        if (!source.isToolRequired()) {
+            return;
+        }
+
+        int slot = findSuitableToolSlot(player, source, remainingToolUses);
+        if (slot < 0) {
+            missingTools.add(new BreakRequirement(source, pos));
+            return;
+        }
+
+        int remaining = remainingToolUses.get(slot);
+        if (remaining < UNLIMITED_TOOL_USES) {
+            remainingToolUses.put(slot, remaining - 1);
+        }
+        toolUses.merge(slot, 1, Integer::sum);
+    }
+
+    private static int findSuitableToolSlot(
+            ServerPlayerEntity player,
+            BlockState source,
+            Map<Integer, Integer> remainingToolUses) {
+        PlayerInventory inventory = player.getInventory();
+        for (int slot = 0; slot < inventory.size(); slot++) {
+            ItemStack stack = inventory.getStack(slot);
+            if (stack.isEmpty() || !stack.isSuitableFor(source)) {
+                continue;
+            }
+            int remaining = remainingToolUses.computeIfAbsent(slot, ignored -> remainingToolUses(stack));
+            if (remaining > 0) {
+                return slot;
+            }
+        }
+        return -1;
+    }
+
+    private static int remainingToolUses(ItemStack stack) {
+        if (!stack.isDamageable()) {
+            return UNLIMITED_TOOL_USES;
+        }
+        return Math.max(0, stack.getMaxDamage() - stack.getDamage());
+    }
+
+    private static boolean consumeMaterialCredit(Map<Item, Integer> materialCredits, Item item) {
+        int available = materialCredits.getOrDefault(item, 0);
+        if (available <= 0) {
+            return false;
+        }
+        if (available == 1) {
+            materialCredits.remove(item);
+        } else {
+            materialCredits.put(item, available - 1);
+        }
+        return true;
+    }
+
     private static void removeCost(ServerPlayerEntity player, Map<Item, Integer> costs) {
         PlayerInventory inventory = player.getInventory();
         for (Map.Entry<Item, Integer> entry : costs.entrySet()) {
@@ -259,6 +366,18 @@ public final class AxiomSurvivalEdits {
                 int removed = Math.min(remaining, stack.getCount());
                 stack.decrement(removed);
                 remaining -= removed;
+            }
+        }
+        inventory.markDirty();
+    }
+
+    private static void damageTools(ServerPlayerEntity player, ServerWorld world, Map<Integer, Integer> toolUses) {
+        PlayerInventory inventory = player.getInventory();
+        for (Map.Entry<Integer, Integer> entry : toolUses.entrySet()) {
+            ItemStack stack = inventory.getStack(entry.getKey());
+            for (int use = 0; use < entry.getValue() && !stack.isEmpty(); use++) {
+                stack.damage(1, world, player, item -> {
+                });
             }
         }
         inventory.markDirty();
@@ -288,6 +407,24 @@ public final class AxiomSurvivalEdits {
                 + (missing.size() > MAX_COST_LINES ? ", ..." : "");
     }
 
+    private static String missingToolSummary(List<BreakRequirement> missingTools) {
+        return missingTools.stream()
+                .limit(MAX_COST_LINES)
+                .map(requirement -> blockName(requirement.state) + " at " + requirement.pos.toShortString())
+                .reduce((left, right) -> left + ", " + right)
+                .orElse("nothing")
+                + (missingTools.size() > MAX_COST_LINES ? ", ..." : "");
+    }
+
+    private static String blockExamples(List<BreakRequirement> blocks) {
+        return blocks.stream()
+                .limit(MAX_COST_LINES)
+                .map(requirement -> blockName(requirement.state) + " at " + requirement.pos.toShortString())
+                .reduce((left, right) -> left + ", " + right)
+                .orElse("none")
+                + (blocks.size() > MAX_COST_LINES ? ", ..." : "");
+    }
+
     private static String unsupportedExamples(List<BlockPos> unsupported) {
         return unsupported.stream()
                 .limit(MAX_COST_LINES)
@@ -299,6 +436,10 @@ public final class AxiomSurvivalEdits {
 
     private static String itemName(Item item) {
         return new ItemStack(item).getName().getString();
+    }
+
+    private static String blockName(BlockState state) {
+        return state.getBlock().getName().getString();
     }
 
     private static boolean canUseAxiom(ServerPlayerEntity player, String permissionName) {
@@ -339,10 +480,17 @@ public final class AxiomSurvivalEdits {
             Map<Item, Integer> costs,
             List<MissingCost> missing,
             List<BlockPos> unsupported,
+            List<BreakRequirement> unbreakable,
+            List<BreakRequirement> missingTools,
+            Map<Integer, Integer> toolUses,
             int unchanged,
-            int removals) {
+            int removals,
+            int reusedMaterials) {
     }
 
     private record MissingCost(Item item, int required, int available) {
+    }
+
+    private record BreakRequirement(BlockState state, BlockPos pos) {
     }
 }

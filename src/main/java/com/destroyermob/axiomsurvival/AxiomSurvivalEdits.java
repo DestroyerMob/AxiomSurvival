@@ -15,6 +15,7 @@ import net.minecraft.entity.player.PlayerInventory;
 import net.minecraft.item.Item;
 import net.minecraft.item.ItemStack;
 import net.minecraft.item.Items;
+import net.minecraft.registry.tag.BlockTags;
 import net.minecraft.server.network.ServerPlayerEntity;
 import net.minecraft.server.world.ServerWorld;
 import net.minecraft.text.Text;
@@ -299,7 +300,7 @@ public final class AxiomSurvivalEdits {
             unbreakable.add(new BreakRequirement(source, pos));
             return;
         }
-        if (!source.isToolRequired()) {
+        if (!requiresToolForAxiomEdit(source)) {
             return;
         }
 
@@ -323,7 +324,7 @@ public final class AxiomSurvivalEdits {
         PlayerInventory inventory = player.getInventory();
         for (int slot = 0; slot < inventory.size(); slot++) {
             ItemStack stack = inventory.getStack(slot);
-            if (stack.isEmpty() || !stack.isSuitableFor(source)) {
+            if (stack.isEmpty() || !isSuitableToolForAxiomEdit(stack, source)) {
                 continue;
             }
             int remaining = remainingToolUses.computeIfAbsent(slot, ignored -> remainingToolUses(stack));
@@ -332,6 +333,25 @@ public final class AxiomSurvivalEdits {
             }
         }
         return -1;
+    }
+
+    private static boolean requiresToolForAxiomEdit(BlockState source) {
+        return source.isToolRequired() || hasPreferredToolTag(source);
+    }
+
+    private static boolean isSuitableToolForAxiomEdit(ItemStack stack, BlockState source) {
+        if (source.isToolRequired() && !stack.isSuitableFor(source)) {
+            return false;
+        }
+        return !hasPreferredToolTag(source) || stack.getMiningSpeedMultiplier(source) > 1.0F;
+    }
+
+    private static boolean hasPreferredToolTag(BlockState source) {
+        return source.isIn(BlockTags.AXE_MINEABLE)
+                || source.isIn(BlockTags.HOE_MINEABLE)
+                || source.isIn(BlockTags.PICKAXE_MINEABLE)
+                || source.isIn(BlockTags.SHOVEL_MINEABLE)
+                || source.isIn(BlockTags.SWORD_EFFICIENT);
     }
 
     private static int remainingToolUses(ItemStack stack) {

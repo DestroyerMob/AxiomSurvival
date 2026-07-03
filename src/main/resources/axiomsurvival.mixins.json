@@ -11,8 +11,7 @@
     "CommandManagerMixin"
   ],
   "client": [
-    "AxiomClientActivationMixin",
-    "MinecraftClientAxiomSlotMixin"
+    "AxiomClientActivationMixin"
   ],
   "injectors": {
     "defaultRequire": 1

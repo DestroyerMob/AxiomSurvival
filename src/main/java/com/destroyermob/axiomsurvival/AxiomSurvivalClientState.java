@@ -12,18 +12,12 @@ public final class AxiomSurvivalClientState {
     private static final String CLIENT_EVENTS_CLASS = "com.moulberry.axiom.ClientEvents";
     private static final String STATIC_VALUES_CLASS = "com.moulberry.axiom.StaticValues";
     private static final String AXIOM_CLASS = "com.moulberry.axiom.Axiom";
-    private static final String EDITOR_UI_CLASS = "com.moulberry.axiom.editor.EditorUI";
-    private static final String BUILDER_TOOL_MANAGER_CLASS = "com.moulberry.axiom.buildertools.BuilderToolManager";
     private static final Map<String, Field> STATIC_BOOLEAN_FIELDS = new HashMap<>();
     private static Method axiomGetInstanceMethod;
     private static Field axiomServerConfigField;
     private static Method replayGetReplayHandlerMethod;
     private static Field replayInstanceField;
-    private static Method editorUiIsActiveMethod;
-    private static Method builderCanUseToolsMethod;
-    private static Method builderSetToolSlotActiveMethod;
     private static boolean warnedAboutActivationState;
-    private static boolean warnedAboutBuilderSlot;
     private static boolean warnedAboutReplayState;
 
     private AxiomSurvivalClientState() {
@@ -34,24 +28,6 @@ public final class AxiomSurvivalClientState {
             return false;
         }
         return isSurvivalAxiomReady(MinecraftClient.getInstance());
-    }
-
-    public static void keepBuilderToolSlotVisible(MinecraftClient client) {
-        if (!isSurvivalAxiomReady(client) || isEditorUiActive()) {
-            return;
-        }
-
-        try {
-            if (!canUseBuilderTools()) {
-                return;
-            }
-            builderSetToolSlotActiveMethod().invoke(null, true);
-        } catch (ReflectiveOperationException | LinkageError | RuntimeException exception) {
-            if (!warnedAboutBuilderSlot) {
-                warnedAboutBuilderSlot = true;
-                AxiomSurvival.LOGGER.warn("Could not keep Axiom's builder tool slot visible in survival.", exception);
-            }
-        }
     }
 
     private static boolean isSurvivalAxiomReady(MinecraftClient client) {
@@ -103,22 +79,6 @@ public final class AxiomSurvivalClientState {
         }
     }
 
-    private static boolean isEditorUiActive() {
-        try {
-            return (Boolean) editorUiIsActiveMethod().invoke(null);
-        } catch (ReflectiveOperationException | LinkageError | RuntimeException exception) {
-            if (!warnedAboutBuilderSlot) {
-                warnedAboutBuilderSlot = true;
-                AxiomSurvival.LOGGER.warn("Could not inspect Axiom's editor UI state.", exception);
-            }
-            return true;
-        }
-    }
-
-    private static boolean canUseBuilderTools() throws ReflectiveOperationException {
-        return (Boolean) builderCanUseToolsMethod().invoke(null);
-    }
-
     private static boolean staticBoolean(String className, String fieldName) throws ReflectiveOperationException {
         return staticBooleanField(className, fieldName).getBoolean(null);
     }
@@ -167,30 +127,5 @@ public final class AxiomSurvivalClientState {
             replayGetReplayHandlerMethod.setAccessible(true);
         }
         return replayGetReplayHandlerMethod;
-    }
-
-    private static Method editorUiIsActiveMethod() throws ReflectiveOperationException {
-        if (editorUiIsActiveMethod == null) {
-            editorUiIsActiveMethod = Class.forName(EDITOR_UI_CLASS).getDeclaredMethod("isActive");
-            editorUiIsActiveMethod.setAccessible(true);
-        }
-        return editorUiIsActiveMethod;
-    }
-
-    private static Method builderCanUseToolsMethod() throws ReflectiveOperationException {
-        if (builderCanUseToolsMethod == null) {
-            builderCanUseToolsMethod = Class.forName(BUILDER_TOOL_MANAGER_CLASS).getDeclaredMethod("canUseBuilderTools");
-            builderCanUseToolsMethod.setAccessible(true);
-        }
-        return builderCanUseToolsMethod;
-    }
-
-    private static Method builderSetToolSlotActiveMethod() throws ReflectiveOperationException {
-        if (builderSetToolSlotActiveMethod == null) {
-            builderSetToolSlotActiveMethod = Class.forName(BUILDER_TOOL_MANAGER_CLASS)
-                    .getDeclaredMethod("setToolSlotActive", boolean.class);
-            builderSetToolSlotActiveMethod.setAccessible(true);
-        }
-        return builderSetToolSlotActiveMethod;
     }
 }

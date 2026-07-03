@@ -28,4 +28,5 @@ The config file is `config/axiom-survival.json`.
 - Water, lava, and powder snow cost filled buckets and return empty buckets.
 - Blocks without a survival item form are rejected instead of being applied for free.
 - Biome edits are blocked while vanilla edit capture is enabled.
+- Survival players receive a restricted Axiom permission profile while capture is enabled so builder tools can be used without granting entity, world, gamemode, or teleport powers.
 - Capture mixins and commands are only applied when `enableAxiomVanillaEditCapture` is set to `true` before launch.

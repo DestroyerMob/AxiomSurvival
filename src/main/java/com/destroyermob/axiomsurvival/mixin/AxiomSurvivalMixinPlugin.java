@@ -14,6 +14,7 @@ public final class AxiomSurvivalMixinPlugin implements IMixinConfigPlugin {
     private static final Set<String> CAPTURE_MIXINS = Set.of(
             "com.destroyermob.axiomsurvival.mixin.AxiomSetBlockCaptureMixin",
             "com.destroyermob.axiomsurvival.mixin.AxiomSetBufferCaptureMixin",
+            "com.destroyermob.axiomsurvival.mixin.AxiomServerPermissionsMixin",
             "com.destroyermob.axiomsurvival.mixin.CommandManagerMixin"
     );
 

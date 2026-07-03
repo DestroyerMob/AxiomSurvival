@@ -7,6 +7,7 @@
   "mixins": [
     "AxiomSetBlockCaptureMixin",
     "AxiomSetBufferCaptureMixin",
+    "AxiomServerPermissionsMixin",
     "CommandManagerMixin"
   ],
   "injectors": {

@@ -1,0 +1,31 @@
+{
+  "schemaVersion": 1,
+  "id": "axiomsurvival",
+  "version": "${version}",
+  "name": "Axiom Survival",
+  "description": "Stages Axiom edits behind survival inventory costs.",
+  "authors": [
+    "DestroyerMob"
+  ],
+  "contact": {
+    "homepage": "https://github.com/DestroyerMob/AxiomSurvival",
+    "sources": "https://github.com/DestroyerMob/AxiomSurvival"
+  },
+  "license": "All Rights Reserved",
+  "environment": "*",
+  "entrypoints": {
+    "main": [
+      "com.destroyermob.axiomsurvival.AxiomSurvival"
+    ]
+  },
+  "mixins": [
+    "axiomsurvival.mixins.json"
+  ],
+  "depends": {
+    "fabricloader": ">=0.16.0",
+    "minecraft": ">=1.21.1 <1.21.2",
+    "java": ">=21",
+    "fabric-api": "*",
+    "axiom": "*"
+  }
+}

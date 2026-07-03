@@ -1,0 +1,13 @@
+{
+  "required": true,
+  "minVersion": "0.8",
+  "package": "com.destroyermob.axiomsurvival.mixin",
+  "compatibilityLevel": "JAVA_21",
+  "mixins": [
+    "AxiomSetBlockCaptureMixin",
+    "AxiomSetBufferCaptureMixin"
+  ],
+  "injectors": {
+    "defaultRequire": 1
+  }
+}

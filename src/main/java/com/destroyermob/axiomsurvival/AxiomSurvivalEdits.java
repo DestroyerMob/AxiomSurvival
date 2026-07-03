@@ -32,6 +32,8 @@ public final class AxiomSurvivalEdits {
     private static final int MAX_COST_LINES = 8;
     private static final long NOTIFY_INTERVAL_TICKS = 40L;
     private static final Map<UUID, PendingEdit> PENDING_EDITS = new HashMap<>();
+    private static BlockState axiomBlockBufferEmptyState;
+    private static boolean triedLoadingAxiomBlockBufferEmptyState;
 
     private AxiomSurvivalEdits() {
     }
@@ -54,6 +56,7 @@ public final class AxiomSurvivalEdits {
         try {
             ClassLoader classLoader = blockBuffer.getClass().getClassLoader();
             Class<?> consumerClass = Class.forName("com.moulberry.axiom.collections.PositionConsumer", false, classLoader);
+            BlockState emptyState = axiomBlockBufferEmptyState(blockBuffer);
             int[] staged = {0};
             InvocationHandler handler = (proxy, method, args) -> {
                 if ("accept".equals(method.getName())
@@ -62,7 +65,8 @@ public final class AxiomSurvivalEdits {
                         && args[0] instanceof Integer x
                         && args[1] instanceof Integer y
                         && args[2] instanceof Integer z
-                        && args[3] instanceof BlockState state) {
+                        && args[3] instanceof BlockState state
+                        && state != emptyState) {
                     if (stageBlock(player, world, new BlockPos(x, y, z), state)) {
                         staged[0]++;
                     }
@@ -189,6 +193,11 @@ public final class AxiomSurvivalEdits {
 
         int maxBlocks = AxiomSurvivalConfig.maxPendingBlocks();
         BlockPos immutablePos = pos.toImmutable();
+        if (world.getBlockState(immutablePos).equals(state)) {
+            edit.blocks.remove(immutablePos);
+            return false;
+        }
+
         boolean alreadyPresent = edit.blocks.containsKey(immutablePos);
         if (!alreadyPresent && edit.blocks.size() >= maxBlocks) {
             edit.overflowedBlocks++;
@@ -201,6 +210,23 @@ public final class AxiomSurvivalEdits {
 
         edit.blocks.put(immutablePos, state);
         return !alreadyPresent;
+    }
+
+    private static BlockState axiomBlockBufferEmptyState(Object blockBuffer) {
+        if (triedLoadingAxiomBlockBufferEmptyState) {
+            return axiomBlockBufferEmptyState;
+        }
+        triedLoadingAxiomBlockBufferEmptyState = true;
+        try {
+            Field field = blockBuffer.getClass().getField("EMPTY_STATE");
+            Object value = field.get(null);
+            if (value instanceof BlockState state) {
+                axiomBlockBufferEmptyState = state;
+            }
+        } catch (ReflectiveOperationException exception) {
+            AxiomSurvival.LOGGER.warn("Could not inspect Axiom's block-buffer empty state; staged edits may include placeholder blocks.", exception);
+        }
+        return axiomBlockBufferEmptyState;
     }
 
     private static void notifyStaged(ServerPlayerEntity player, int staged) {

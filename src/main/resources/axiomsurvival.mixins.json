@@ -10,6 +10,10 @@
     "AxiomServerPermissionsMixin",
     "CommandManagerMixin"
   ],
+  "client": [
+    "AxiomClientActivationMixin",
+    "MinecraftClientAxiomSlotMixin"
+  ],
   "injectors": {
     "defaultRequire": 1
   }

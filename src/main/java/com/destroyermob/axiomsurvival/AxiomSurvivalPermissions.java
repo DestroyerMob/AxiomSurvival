@@ -13,6 +13,11 @@ public final class AxiomSurvivalPermissions {
             "CHUNK",
             "CAN_IMPORT_BLOCKS",
             "CAN_EXPORT_BLOCKS",
+            "BLUEPRINT",
+            "EDITOR",
+            "TOOL",
+            "PLAYER_BYPASS_MOVEMENT_RESTRICTIONS",
+            "PLAYER_HOTBAR",
             "BUILDERTOOL"
     );
 

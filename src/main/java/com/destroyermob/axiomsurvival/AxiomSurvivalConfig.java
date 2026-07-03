@@ -56,7 +56,7 @@ public final class AxiomSurvivalConfig {
     }
 
     private static final class Config {
-        private boolean enableAxiomVanillaEditCapture = true;
+        private boolean enableAxiomVanillaEditCapture = false;
         private int axiomVanillaEditMaxPendingBlocks = DEFAULT_MAX_PENDING_BLOCKS;
 
         private Config normalized() {

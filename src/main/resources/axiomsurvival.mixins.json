@@ -7,8 +7,7 @@
   "mixins": [
     "AxiomSetBlockCaptureMixin",
     "AxiomSetBufferCaptureMixin",
-    "AxiomServerPermissionsMixin",
-    "CommandManagerMixin"
+    "AxiomServerPermissionsMixin"
   ],
   "client": [
     "AxiomClientActivationMixin"

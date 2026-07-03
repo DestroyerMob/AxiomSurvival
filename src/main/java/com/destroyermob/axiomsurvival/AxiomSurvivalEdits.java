@@ -1,17 +1,13 @@
 package com.destroyermob.axiomsurvival;
 
-import com.mojang.brigadier.exceptions.CommandSyntaxException;
 import java.lang.reflect.Field;
 import java.lang.reflect.InvocationHandler;
 import java.lang.reflect.Method;
 import java.lang.reflect.Proxy;
 import java.util.ArrayList;
-import java.util.Comparator;
-import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.UUID;
 import net.minecraft.block.Block;
 import net.minecraft.block.BlockState;
 import net.minecraft.block.Blocks;
@@ -19,19 +15,14 @@ import net.minecraft.entity.player.PlayerInventory;
 import net.minecraft.item.Item;
 import net.minecraft.item.ItemStack;
 import net.minecraft.item.Items;
-import net.minecraft.registry.RegistryKey;
-import net.minecraft.server.command.ServerCommandSource;
 import net.minecraft.server.network.ServerPlayerEntity;
 import net.minecraft.server.world.ServerWorld;
 import net.minecraft.text.Text;
 import net.minecraft.util.Formatting;
 import net.minecraft.util.math.BlockPos;
-import net.minecraft.world.World;
 
 public final class AxiomSurvivalEdits {
     private static final int MAX_COST_LINES = 8;
-    private static final long NOTIFY_INTERVAL_TICKS = 40L;
-    private static final Map<UUID, PendingEdit> PENDING_EDITS = new HashMap<>();
     private static BlockState axiomBlockBufferEmptyState;
     private static boolean triedLoadingAxiomBlockBufferEmptyState;
 
@@ -43,8 +34,8 @@ public final class AxiomSurvivalEdits {
             return false;
         }
         acknowledgeSequence(player, sequenceId);
-        int staged = stageBlocks(player, player.getServerWorld(), blocks);
-        notifyStaged(player, staged);
+        PendingEdit edit = captureBlocks(player.getServerWorld(), blocks);
+        applyCapturedEdit(player, player.getServerWorld(), edit);
         return true;
     }
 
@@ -54,32 +45,11 @@ public final class AxiomSurvivalEdits {
         }
 
         try {
-            ClassLoader classLoader = blockBuffer.getClass().getClassLoader();
-            Class<?> consumerClass = Class.forName("com.moulberry.axiom.collections.PositionConsumer", false, classLoader);
-            BlockState emptyState = axiomBlockBufferEmptyState(blockBuffer);
-            int[] staged = {0};
-            InvocationHandler handler = (proxy, method, args) -> {
-                if ("accept".equals(method.getName())
-                        && args != null
-                        && args.length == 4
-                        && args[0] instanceof Integer x
-                        && args[1] instanceof Integer y
-                        && args[2] instanceof Integer z
-                        && args[3] instanceof BlockState state
-                        && state != emptyState) {
-                    if (stageBlock(player, world, new BlockPos(x, y, z), state)) {
-                        staged[0]++;
-                    }
-                }
-                return null;
-            };
-            Object consumer = Proxy.newProxyInstance(classLoader, new Class<?>[]{consumerClass}, handler);
-            Method forEach = blockBuffer.getClass().getMethod("forEach", consumerClass);
-            forEach.invoke(blockBuffer, consumer);
-            notifyStaged(player, staged[0]);
+            PendingEdit edit = captureBlockBuffer(blockBuffer, world);
+            applyCapturedEdit(player, world, edit);
         } catch (ReflectiveOperationException exception) {
-            AxiomSurvival.LOGGER.warn("Could not stage Axiom block buffer; cancelling the edit to avoid free world edits.", exception);
-            player.sendMessage(Text.literal("Could not stage that Axiom edit, so it was cancelled.").formatted(Formatting.RED));
+            AxiomSurvival.LOGGER.warn("Could not inspect Axiom block buffer; cancelling the edit to avoid free world edits.", exception);
+            player.sendMessage(Text.literal("Could not inspect that Axiom edit, so it was cancelled.").formatted(Formatting.RED));
         }
         return true;
     }
@@ -102,95 +72,39 @@ public final class AxiomSurvivalEdits {
         return false;
     }
 
-    public static int status(ServerCommandSource source) throws CommandSyntaxException {
-        ServerPlayerEntity player = source.getPlayerOrThrow();
-        PendingEdit edit = pending(player);
-        if (edit == null || edit.blocks.isEmpty()) {
-            source.sendFeedback(() -> Text.literal("No pending vanilla edit."), false);
-            return 0;
-        }
-        if (!edit.dimension.equals(player.getServerWorld().getRegistryKey())) {
-            source.sendFeedback(() -> Text.literal("Pending vanilla edit: " + edit.blocks.size()
-                    + " staged block(s) in another dimension. Go back there to inspect/apply it, or use /vanillaedit cancel."), false);
-            return edit.blocks.size();
-        }
-
-        CostReport report = costReport(player, edit);
-        sendReport(source, edit, report);
-        return edit.blocks.size();
-    }
-
-    public static int apply(ServerCommandSource source) throws CommandSyntaxException {
-        ServerPlayerEntity player = source.getPlayerOrThrow();
-        PendingEdit edit = pending(player);
-        if (edit == null || edit.blocks.isEmpty()) {
-            source.sendError(Text.literal("No pending vanilla edit to apply."));
-            return 0;
-        }
-        if (!edit.dimension.equals(player.getServerWorld().getRegistryKey())) {
-            source.sendError(Text.literal("That pending edit belongs to another dimension. Go back there or cancel it."));
-            return 0;
-        }
-
-        CostReport report = costReport(player, edit);
-        if (!report.unsupported.isEmpty()) {
-            source.sendError(Text.literal("This edit contains blocks with no survival item form. Cancel it or remove those blocks."));
-            source.sendFeedback(() -> Text.literal("Unsupported examples: " + unsupportedExamples(report.unsupported)), false);
-            return 0;
-        }
-        if (!player.getAbilities().creativeMode && !report.missing.isEmpty()) {
-            source.sendError(Text.literal("You do not have enough materials for this edit."));
-            source.sendFeedback(() -> Text.literal("Missing: " + missingSummary(report.missing)), false);
-            return 0;
-        }
-
-        if (!player.getAbilities().creativeMode) {
-            removeCost(player, report.costs);
-            returnBuckets(player, report.costs);
-        }
-
-        ServerWorld world = player.getServerWorld();
-        int applied = 0;
-        for (Map.Entry<BlockPos, BlockState> entry : edit.blocks.entrySet()) {
-            if (world.getBlockState(entry.getKey()).equals(entry.getValue())) {
-                continue;
-            }
-            if (world.setBlockState(entry.getKey(), entry.getValue(), Block.NOTIFY_ALL)) {
-                applied++;
-            }
-        }
-        PENDING_EDITS.remove(player.getUuid());
-        int finalApplied = applied;
-        source.sendFeedback(() -> Text.literal("Applied " + finalApplied + " block(s) from the pending vanilla edit."), true);
-        return applied;
-    }
-
-    public static int cancel(ServerCommandSource source) throws CommandSyntaxException {
-        ServerPlayerEntity player = source.getPlayerOrThrow();
-        PendingEdit removed = PENDING_EDITS.remove(player.getUuid());
-        int count = removed == null ? 0 : removed.blocks.size();
-        source.sendFeedback(() -> Text.literal("Cancelled pending vanilla edit with " + count + " staged block(s)."), false);
-        return count;
-    }
-
-    private static int stageBlocks(ServerPlayerEntity player, ServerWorld world, Map<BlockPos, BlockState> blocks) {
-        int staged = 0;
+    private static PendingEdit captureBlocks(ServerWorld world, Map<BlockPos, BlockState> blocks) {
+        PendingEdit edit = new PendingEdit();
         for (Map.Entry<BlockPos, BlockState> entry : blocks.entrySet()) {
-            if (stageBlock(player, world, entry.getKey(), entry.getValue())) {
-                staged++;
-            }
+            addBlockToEdit(world, edit, entry.getKey(), entry.getValue());
         }
-        return staged;
+        return edit;
     }
 
-    private static boolean stageBlock(ServerPlayerEntity player, ServerWorld world, BlockPos pos, BlockState state) {
-        PendingEdit edit = pendingOrCreate(player, world);
-        if (!edit.dimension.equals(world.getRegistryKey())) {
-            PENDING_EDITS.remove(player.getUuid());
-            edit = pendingOrCreate(player, world);
-            player.sendMessage(Text.literal("Started a new pending vanilla edit in this dimension."));
-        }
+    private static PendingEdit captureBlockBuffer(Object blockBuffer, ServerWorld world) throws ReflectiveOperationException {
+        PendingEdit edit = new PendingEdit();
+        ClassLoader classLoader = blockBuffer.getClass().getClassLoader();
+        Class<?> consumerClass = Class.forName("com.moulberry.axiom.collections.PositionConsumer", false, classLoader);
+        BlockState emptyState = axiomBlockBufferEmptyState(blockBuffer);
+        InvocationHandler handler = (proxy, method, args) -> {
+            if ("accept".equals(method.getName())
+                    && args != null
+                    && args.length == 4
+                    && args[0] instanceof Integer x
+                    && args[1] instanceof Integer y
+                    && args[2] instanceof Integer z
+                    && args[3] instanceof BlockState state
+                    && state != emptyState) {
+                addBlockToEdit(world, edit, new BlockPos(x, y, z), state);
+            }
+            return null;
+        };
+        Object consumer = Proxy.newProxyInstance(classLoader, new Class<?>[]{consumerClass}, handler);
+        Method forEach = blockBuffer.getClass().getMethod("forEach", consumerClass);
+        forEach.invoke(blockBuffer, consumer);
+        return edit;
+    }
 
+    private static boolean addBlockToEdit(ServerWorld world, PendingEdit edit, BlockPos pos, BlockState state) {
         int maxBlocks = AxiomSurvivalConfig.maxPendingBlocks();
         BlockPos immutablePos = pos.toImmutable();
         if (world.getBlockState(immutablePos).equals(state)) {
@@ -201,15 +115,56 @@ public final class AxiomSurvivalEdits {
         boolean alreadyPresent = edit.blocks.containsKey(immutablePos);
         if (!alreadyPresent && edit.blocks.size() >= maxBlocks) {
             edit.overflowedBlocks++;
-            if (edit.overflowedBlocks == 1) {
-                player.sendMessage(Text.literal("Pending vanilla edit reached the configured limit of "
-                        + maxBlocks + " blocks. Extra blocks are being ignored.").formatted(Formatting.RED));
-            }
             return false;
         }
 
         edit.blocks.put(immutablePos, state);
         return !alreadyPresent;
+    }
+
+    private static void applyCapturedEdit(ServerPlayerEntity player, ServerWorld world, PendingEdit edit) {
+        if (edit.blocks.isEmpty()) {
+            player.sendMessage(Text.literal("Axiom edit had no block changes."), true);
+            return;
+        }
+        if (edit.overflowedBlocks > 0) {
+            player.sendMessage(Text.literal("Axiom edit is too large for survival capture; nothing was changed. Limit: "
+                    + AxiomSurvivalConfig.maxPendingBlocks() + " block(s).").formatted(Formatting.RED), false);
+            return;
+        }
+
+        CostReport report = costReport(player, world, edit);
+        if (!report.unsupported.isEmpty()) {
+            player.sendMessage(Text.literal("Axiom edit cancelled: some blocks have no survival item form. Examples: "
+                    + unsupportedExamples(report.unsupported)).formatted(Formatting.RED), false);
+            return;
+        }
+        if (!player.getAbilities().creativeMode && !report.missing.isEmpty()) {
+            player.sendMessage(Text.literal("Axiom edit cancelled: missing " + missingSummary(report.missing) + ".")
+                    .formatted(Formatting.RED), false);
+            return;
+        }
+
+        if (!player.getAbilities().creativeMode) {
+            removeCost(player, report.costs);
+            returnBuckets(player, report.costs);
+        }
+
+        int applied = applyBlocks(world, edit);
+        player.sendMessage(Text.literal("Applied " + applied + " Axiom block(s)."), true);
+    }
+
+    private static int applyBlocks(ServerWorld world, PendingEdit edit) {
+        int applied = 0;
+        for (Map.Entry<BlockPos, BlockState> entry : edit.blocks.entrySet()) {
+            if (world.getBlockState(entry.getKey()).equals(entry.getValue())) {
+                continue;
+            }
+            if (world.setBlockState(entry.getKey(), entry.getValue(), Block.NOTIFY_ALL)) {
+                applied++;
+            }
+        }
+        return applied;
     }
 
     private static BlockState axiomBlockBufferEmptyState(Object blockBuffer) {
@@ -229,30 +184,7 @@ public final class AxiomSurvivalEdits {
         return axiomBlockBufferEmptyState;
     }
 
-    private static void notifyStaged(ServerPlayerEntity player, int staged) {
-        PendingEdit edit = pending(player);
-        if (edit == null || staged <= 0) {
-            return;
-        }
-        long gameTime = player.getServerWorld().getTime();
-        if (gameTime - edit.lastNotifyGameTime < NOTIFY_INTERVAL_TICKS) {
-            return;
-        }
-        edit.lastNotifyGameTime = gameTime;
-        player.sendMessage(Text.literal("Axiom edit staged: " + edit.blocks.size()
-                + " block(s). Use /vanillaedit apply or /vanillaedit cancel."), true);
-    }
-
-    private static PendingEdit pending(ServerPlayerEntity player) {
-        return PENDING_EDITS.get(player.getUuid());
-    }
-
-    private static PendingEdit pendingOrCreate(ServerPlayerEntity player, ServerWorld world) {
-        return PENDING_EDITS.computeIfAbsent(player.getUuid(), id -> new PendingEdit(world.getRegistryKey()));
-    }
-
-    private static CostReport costReport(ServerPlayerEntity player, PendingEdit edit) {
-        ServerWorld world = player.getServerWorld();
+    private static CostReport costReport(ServerPlayerEntity player, ServerWorld world, PendingEdit edit) {
         Map<Item, Integer> costs = new LinkedHashMap<>();
         List<BlockPos> unsupported = new ArrayList<>();
         int unchanged = 0;
@@ -347,37 +279,6 @@ public final class AxiomSurvivalEdits {
         }
     }
 
-    private static void sendReport(ServerCommandSource source, PendingEdit edit, CostReport report) {
-        source.sendFeedback(() -> Text.literal("Pending vanilla edit: " + edit.blocks.size()
-                + " staged block(s), " + report.removals + " removal(s), " + report.unchanged + " unchanged."), false);
-        if (edit.overflowedBlocks > 0) {
-            source.sendFeedback(() -> Text.literal(edit.overflowedBlocks
-                    + " block(s) were ignored after the pending edit limit was reached.").formatted(Formatting.RED), false);
-        }
-        if (report.costs.isEmpty()) {
-            source.sendFeedback(() -> Text.literal("Cost: no items required."), false);
-        } else {
-            source.sendFeedback(() -> Text.literal("Cost: " + costSummary(report.costs)), false);
-        }
-        if (!report.missing.isEmpty()) {
-            source.sendFeedback(() -> Text.literal("Missing: " + missingSummary(report.missing)).formatted(Formatting.RED), false);
-        }
-        if (!report.unsupported.isEmpty()) {
-            source.sendFeedback(() -> Text.literal("Unsupported blocks: " + report.unsupported.size()
-                    + " example(s): " + unsupportedExamples(report.unsupported)).formatted(Formatting.RED), false);
-        }
-    }
-
-    private static String costSummary(Map<Item, Integer> costs) {
-        return costs.entrySet().stream()
-                .sorted(Comparator.comparing(entry -> itemName(entry.getKey())))
-                .limit(MAX_COST_LINES)
-                .map(entry -> entry.getValue() + " " + itemName(entry.getKey()))
-                .reduce((left, right) -> left + ", " + right)
-                .orElse("no items required")
-                + (costs.size() > MAX_COST_LINES ? ", ..." : "");
-    }
-
     private static String missingSummary(List<MissingCost> missing) {
         return missing.stream()
                 .limit(MAX_COST_LINES)
@@ -430,14 +331,8 @@ public final class AxiomSurvivalEdits {
     }
 
     private static final class PendingEdit {
-        private final RegistryKey<World> dimension;
         private final Map<BlockPos, BlockState> blocks = new LinkedHashMap<>();
-        private long lastNotifyGameTime = Long.MIN_VALUE;
         private int overflowedBlocks;
-
-        private PendingEdit(RegistryKey<World> dimension) {
-            this.dimension = dimension;
-        }
     }
 
     private record CostReport(

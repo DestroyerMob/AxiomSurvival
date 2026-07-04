@@ -10,7 +10,8 @@
     "AxiomServerPermissionsMixin"
   ],
   "client": [
-    "AxiomClientActivationMixin"
+    "AxiomClientActivationMixin",
+    "AxiomTinkerInteractionMixin"
   ],
   "injectors": {
     "defaultRequire": 1

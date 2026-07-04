@@ -15,7 +15,8 @@ public final class AxiomSurvivalMixinPlugin implements IMixinConfigPlugin {
             "com.destroyermob.axiomsurvival.mixin.AxiomClientActivationMixin",
             "com.destroyermob.axiomsurvival.mixin.AxiomSetBlockCaptureMixin",
             "com.destroyermob.axiomsurvival.mixin.AxiomSetBufferCaptureMixin",
-            "com.destroyermob.axiomsurvival.mixin.AxiomServerPermissionsMixin"
+            "com.destroyermob.axiomsurvival.mixin.AxiomServerPermissionsMixin",
+            "com.destroyermob.axiomsurvival.mixin.AxiomTinkerInteractionMixin"
     );
 
     private boolean captureEnabled;

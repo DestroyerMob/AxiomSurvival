@@ -1,8 +1,10 @@
 # Axiom Survival
 
-Axiom Survival is a Fabric 1.21.1 add-on for Axiom that stages Axiom block edits behind survival inventory costs.
+Axiom Survival is a Fabric 1.21.1 add-on that puts Axiom block edits behind survival material, tool, and permission checks. It is designed to load directly with Axiom on Fabric; Minecraft Beyond runs it in a NeoForge instance through Sinytra Connector.
 
-It is designed to run directly with Axiom on Fabric. In Minecraft Beyond's NeoForge instance, it loads alongside Axiom through Sinytra Connector.
+## Current Status
+
+Experimental internal playtesting. The survival boundary is disabled by default and must be enabled before launch because its Axiom capture and permission mixins are selected during startup.
 
 ## Project Facts
 
@@ -13,16 +15,27 @@ It is designed to run directly with Axiom on Fabric. In Minecraft Beyond's NeoFo
 - Minecraft Beyond runtime: NeoForge through Sinytra Connector
 - Config file: `config/axiom-survival.json`
 
-## Player Commands
+## How It Works
 
-- `/vanillaedit status` shows the staged edit and material cost.
-- `/vanillaedit apply` consumes materials and applies the staged edit.
-- `/vanillaedit cancel` discards the staged edit.
-- `/axiomsurvival` provides the same subcommands as an explicit alias.
+When capture is enabled, the add-on intercepts Axiom set-block and block-buffer operations before Axiom changes the world. It builds the complete requested block set, validates it, and computes survival costs first. Failed validation rejects the operation without charging the player; a valid operation consumes its costs and applies the captured blocks.
 
-## Config
+For survival players, validation includes:
 
-The config file is `config/axiom-survival.json`.
+- A material cost for every placed block that has a survival item form.
+- Credit for compatible source blocks removed by the same move, so moving material does not charge twice.
+- Filled-bucket costs for water, lava, and powder snow, with empty buckets returned after payment.
+- Suitable-tool checks for source blocks that require the correct tool.
+- Tool durability accounting across all removals in the edit.
+- Rejection of unbreakable blocks and blocks without a survival item representation.
+- A configurable maximum captured-edit size.
+
+Creative players bypass material and tool costs, but the edit still passes through the capture path. Biome-buffer edits are rejected while capture mode is active.
+
+The add-on grants survival players a restricted Axiom permission profile for builder operations without granting entity, world, gamemode, or teleport powers. It also lets ordinary block use/attack interactions pass through when the Axiom editor and builder-tool slot are not active.
+
+## Configuration
+
+The config is generated at `config/axiom-survival.json`:
 
 ```json
 {
@@ -31,14 +44,10 @@ The config file is `config/axiom-survival.json`.
 }
 ```
 
-## Notes
+- `enableAxiomVanillaEditCapture` enables the startup-gated Axiom mixins and survival checks.
+- `axiomVanillaEditMaxPendingBlocks` limits one captured operation to between 1 and 1,000,000 changed positions.
 
-- Creative players can apply staged edits without material cost.
-- Water, lava, and powder snow cost filled buckets and return empty buckets.
-- Blocks without a survival item form are rejected instead of being applied for free.
-- Biome edits are blocked while vanilla edit capture is enabled.
-- Survival players receive a restricted Axiom permission profile while capture is enabled so builder tools can be used without granting entity, world, gamemode, or teleport powers.
-- Capture mixins and commands are only applied when `enableAxiomVanillaEditCapture` is set to `true` before launch.
+Restart the game after changing the capture flag. There are no `/vanillaedit` staging commands in the current implementation; validated edits are handled directly when Axiom submits them.
 
 ## Building
 
@@ -47,6 +56,17 @@ The config file is `config/axiom-survival.json`.
 ```
 
 The built jar is written to `build/libs/`.
+
+## Minecraft Beyond Integration
+
+Minecraft Beyond manages the Fabric jar as a client-side local mod and supplies Axiom, Sinytra Connector, Forgified Fabric API, and the runtime config. Mod Quality Picker can disable Axiom and Axiom Survival together in profiles that do not need builder tooling.
+
+## Known Limitations
+
+- The integration reflects into Axiom internals for block buffers and interaction state, so an Axiom update can require a compatibility pass.
+- Only block-state edits are supported. Biome edits and broader world/entity operations remain blocked while capture is enabled.
+- Blocks without an item form are rejected, even when another survival mechanic could theoretically create them.
+- This is a cost-and-permission boundary, not a general-purpose undo or queued-edit system.
 
 ## License
 
